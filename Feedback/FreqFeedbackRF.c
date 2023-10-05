@@ -6,6 +6,119 @@
 #include <time.h>
 #include "rp.h"
 
+// Function prototypes
+struct sigInfo;
+struct validInfo;
+bool initializeRP();
+bool acquireSignal(float **buff_ch1, float **buff_ch2, uint32_t *buff_size);
+struct sigInfo processSignal(float *buff_ch1, 
+                    float *buff_ch2, 
+                    uint32_t buff_size,
+                    float B_baseline,
+                    float A_baseline,
+                    float unittime,
+                    float center_finetuning,
+                    float gain,
+                    float decay);
+struct validInfo validateResults(double center, 
+                    double delta_PC, 
+                    float intensity, 
+                    float *buff_ch1, 
+                    float *buff_ch2,
+                    float gain,
+                    float decay, 
+                    uint32_t buff_size)
+
+
+int main(int argc, char **argv) {
+    // USER PARAMS
+    float B_baseline = 0.25;
+    float A_baseline = -0.036;  
+    float unittime = 4192.0/16384;
+    float unitfreq = unittime * 4/2000;
+    int trig_time = 100/unittime;
+    float center_finetuning = 4340;
+    float gain = -0.0001;
+    float decay = 0.7;
+    
+    struct sigInfo result;
+    struct validInfo validResults;
+
+    // check RP initialization
+    if (!initializeRP()) {
+        return 1;
+    }
+    // perform memory allocation
+    uint32_t buff_size = 16384;
+    uint32_t buff_size_trim = 8192;
+    float *buff_ch1 = (float *)malloc(buff_size * sizeof(float));
+    float *buff_ch2 = (float *)malloc(buff_size * sizeof(float));
+    // open up write files
+    FILE *fpa = fopen("ch1.txt", "w+");
+    FILE *fpb = fopen("ch2.txt", "w+");
+
+    // set RP trigger levels and decimation
+    rp_AcqReset();
+    rp_AcqSetDecimation(RP_DEC_32);
+    rp_AcqSetTriggerLevel(RP_CH_1, 0.7);
+    // acquire signals
+    while (1) {
+        if (!acquireSignal(&buff_ch1, &buff_ch2, &buff_size)) {
+            break;
+        }
+        // signals should now be acquired and have populated buffers
+        clock_t begin clock();
+        result = processSignal(&buff_ch1, 
+                        &buff_ch2, 
+                        buff_size, 
+                        B_baseline, 
+                        A_baseline, 
+                        unittime, 
+                        center_finetuning,
+                        gain, 
+                        decay);
+        // validate results
+        validResults = validateResults(result.center, 
+                                        result.delta_PC, 
+                                        result.intensity, 
+                                        &buff_ch1, 
+                                        &buff_ch2,
+                                        gain,
+                                        decay, 
+                                        buff_size);
+
+        clock_t end = clock();
+        // look at time spent
+        double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+        printf("\n time spent = %f ", time_spent);
+
+        if (validResults.valid_run){
+            printf("valid run! \n");
+            printf("Delta_PC = %f MHz. ", result.delta_PC);
+            printf("intensity = %f, ", result.intensity);
+            printf("history = %f. \n", validResults.history);
+            printf("output = %f. \n", validResults.output);    
+        }
+
+        else {
+            printf("INVALID run!!! \n");
+            if (validResults.front==0) printf("front of sequnce has no signal.\n");
+            if (validResults.rear==0) printf("rear of sequnce has no signal.\n");
+            if (validResults.front < 20 && rear < 20) printf("cavity most likely unlocked.\n");
+            if (results.intensity > 1000) printf("SPCM saturated.\n");
+        }       
+    }
+    
+    // Clean up and release resources
+    fclose(fpa);
+    fclose(fpb);
+    free(buff_ch1);
+    free(buff_ch2);
+    rp_Release();
+
+    return 0;
+}
+
 // Function to check if Red Pitaya API initialization was successful
 bool initializeRP() {
     if (rp_Init() != RP_OK) {
@@ -54,9 +167,9 @@ struct sigInfo processSignal(float *buff_ch1,
                     float unittime,
                     float center_finetuning,
                     float gain,
-                    float decay) {
+                    float decay,
+                    float unitfreq) {
     // initialize relevant variables
-    float unitfreq = unittime * 4 / 2000;
     int counter = 0;
     float numerator = 0.0;
     float denominator = 0.0;
@@ -158,91 +271,4 @@ struct validInfo validateResults(double center,
     return validResults;
     }
 
-int main(int argc, char **argv) {
-    // USER PARAMS
-    float B_baseline = 0.25;
-    float A_baseline = -0.036;  
-    float unittime = 4192.0/16384;
-    float unitfreq = unittime * 4/2000;
-    int trig_time = 100/unittime;
-    float center_finetuning = 4340;
-    float gain = -0.0001;
-    float decay = 0.7;
-    
-    struct sigInfo result;
-    struct validInfo validResults;
 
-    // check RP initialization
-    if (!initializeRP()) {
-        return 1;
-    }
-    // perform memory allocation
-    uint32_t buff_size = 16384;
-    uint32_t buff_size_trim = 8192;
-    float *buff_ch1 = (float *)malloc(buff_size * sizeof(float));
-    float *buff_ch2 = (float *)malloc(buff_size * sizeof(float));
-    // open up write files
-    FILE *fpa = fopen("ch1.txt", "w+");
-    FILE *fpb = fopen("ch2.txt", "w+");
-
-    // set RP trigger levels and decimation
-    rp_AcqReset();
-    rp_AcqSetDecimation(RP_DEC_32);
-    rp_AcqSetTriggerLevel(RP_CH_1, 0.7);
-    // acquire signals
-    while (1) {
-        if (!acquireSignal(&buff_ch1, &buff_ch2, &buff_size)) {
-            break;
-        }
-        // signals should now be acquired and have populated buffers
-        clock_t begin clock();
-        result = processSignal(&buff_ch1, 
-                        &buff_ch2, 
-                        buff_size, 
-                        B_baseline, 
-                        A_baseline, 
-                        unittime, 
-                        center_finetuning,
-                        gain, 
-                        decay);
-        // validate results
-        validResults = validateResults(result.center, 
-                                        result.delta_PC, 
-                                        result.intensity, 
-                                        &buff_ch1, 
-                                        &buff_ch2,
-                                        gain,
-                                        decay, 
-                                        buff_size);
-
-        clock_t end = clock();
-        // look at time spent
-        double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-        printf("\n time spent = %f ", time_spent);
-
-        if (valid_run){
-            printf("valid run! \n");
-            printf("Delta_PC = %f MHz. ", result.delta_PC);
-            printf("intensity = %f, ", result.intensity);
-            printf("history = %f. \n", validResults.history);
-            printf("output = %f. \n", validResults.output);    
-        }
-
-        else {
-            printf("INVALID run!!! \n");
-            if (validResults.front==0) printf("front of sequnce has no signal.\n");
-            if (validResults.rear==0) printf("rear of sequnce has no signal.\n");
-            if (validResults.front < 20 && rear < 20) printf("cavity most likely unlocked.\n");
-            if (results.intensity > 1000) printf("SPCM saturated.\n");
-        }       
-    }
-    
-    // Clean up and release resources
-    fclose(fpa);
-    fclose(fpb);
-    free(buff_ch1);
-    free(buff_ch2);
-    rp_Release();
-
-    return 0;
-}
